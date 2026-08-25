@@ -1,0 +1,362 @@
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+const loadingText = document.querySelector('h1');
+
+const background = new Image();
+background.src = '1000017093.jpg';
+
+const hibaSprite = new Image();
+hibaSprite.src = 'hiba.png';
+
+const butterflySprite = new Image();
+butterflySprite.src = 'butterfly.png';
+
+const witchSprite = new Image();
+witchSprite.src = 'witch.png';
+
+const treeSprite = new Image();
+treeSprite.src = 'tree.png';
+
+const cottageSprite = new Image();
+cottageSprite.src = 'cottage.png';
+
+const interiorSprite = new Image();
+interiorSprite.src = 'interior.png';
+
+let assetsLoaded = 0;
+function assetLoaded() {
+    assetsLoaded++;
+    if (assetsLoaded === 7) {
+        loadingText.innerText = "The Witch's Forest";
+        requestAnimationFrame(gameLoop);
+    }
+}
+background.onload = assetLoaded;
+hibaSprite.onload = assetLoaded;
+butterflySprite.onload = assetLoaded;
+witchSprite.onload = assetLoaded;
+treeSprite.onload = assetLoaded;
+cottageSprite.onload = assetLoaded;
+interiorSprite.onload = assetLoaded;
+
+let cameraX = 0;
+const worldWidth = 4800; 
+let gameState = "tutorial"; // "tutorial", "chase", "safe", "interior"
+
+// Dialogue UI System
+let currentDialogue = "Let's learn how to run away! (Move Right ➔)";
+let dialogueTimer = 0;
+
+const groundY = 320; 
+
+const player = {
+    x: 100,
+    y: 200,
+    width: 80,  // Bigger Hiba
+    height: 80,
+    speed: 5.5,
+    velocityX: 0,
+    velocityY: 0,
+    gravity: 0.6,
+    jumpForce: -13,
+    isJumping: false,
+    facing: 'forward'
+};
+
+const witch = {
+    x: -200,
+    y: 200,
+    width: 100, // Bigger Witch
+    height: 100,
+    speed: 3.8,
+    velocityY: 0,
+    isJumping: false
+};
+
+// Falling Tree & Cottage Settings
+let treeAngle = 0; 
+let isTreeFalling = false;
+const fallingTreeX = 3950; 
+
+const cottage = {
+    x: 4250,
+    y: groundY - 240, // Shifted down to lock to the floor context perfectly
+    width: 320,       // Significantly larger structure
+    height: 240
+};
+
+// 4. Parkour Platforms Layout
+const platforms = [
+    // --- Tutorial Jumps ---
+    { x: 500, y: 240, width: 120, height: 15, text: "JUMP!" },
+    { x: 800, y: 170, width: 120, height: 15, text: "" },
+    { x: 1100, y: 220, width: 150, height: 15, text: "" },
+
+    // --- Witch Chase Jumps ---
+    { x: 2300, y: 240, width: 110, height: 15, text: "" },
+    { x: 2600, y: 180, width: 110, height: 15, text: "" },
+    { x: 2900, y: 220, width: 140, height: 15, text: "" },
+    { x: 3300, y: 160, width: 110, height: 15, text: "" },
+    { x: 3600, y: 230, width: 150, height: 15, text: "" }
+];
+
+// 5. Inputs Configuration
+const keys = { left: false, right: false, jump: false };
+
+window.addEventListener('keydown', (e) => {
+    if (e.code === 'ArrowLeft' || e.code === 'KeyA') keys.left = true;
+    if (e.code === 'ArrowRight' || e.code === 'KeyD') keys.right = true;
+    if (e.code === 'Space' || e.code === 'ArrowUp') keys.jump = true;
+});
+
+window.addEventListener('keyup', (e) => {
+    if (e.code === 'ArrowLeft' || e.code === 'KeyA') keys.left = false;
+    if (e.code === 'ArrowRight' || e.code === 'KeyD') keys.right = false;
+    if (e.code === 'Space' || e.code === 'ArrowUp') keys.jump = false;
+});
+
+setupMobileButton('btn-left', 'left');
+setupMobileButton('btn-right', 'right');
+setupMobileButton('btn-jump', 'jump');
+
+function setupMobileButton(id, action) {
+    const btn = document.getElementById(id);
+    if (!btn) return;
+    btn.addEventListener('touchstart', (e) => { e.preventDefault(); keys[action] = true; });
+    btn.addEventListener('touchend', (e) => { e.preventDefault(); keys[action] = false; });
+    btn.addEventListener('mousedown', () => keys[action] = true);
+    btn.addEventListener('mouseup', () => keys[action] = false);
+    btn.addEventListener('mouseleave', () => keys[action] = false);
+}
+
+function gameLoop() {
+    updatePlayer();
+    updateStoryAndWitch();
+    updateCamera();
+    render();
+    requestAnimationFrame(gameLoop);
+}
+
+function updatePlayer() {
+    player.velocityX = 0;
+    if (keys.left) {
+        player.velocityX = -player.speed;
+        player.facing = 'left';
+    } else if (keys.right) {
+        player.velocityX = player.speed;
+        player.facing = 'right';
+    } else {
+        player.facing = 'forward';
+    }
+    player.x += player.velocityX;
+
+    if (gameState === "interior") {
+        if (player.x < 50) player.x = 50;
+        if (player.x + player.width > canvas.width - 50) player.x = canvas.width - player.width - 50;
+    } else {
+        if (player.x < 0) player.x = 0;
+        if (player.x + player.width > worldWidth) player.x = worldWidth - player.width;
+    }
+
+    // Jump Physics
+    if (keys.jump && !player.isJumping) {
+        player.velocityY = player.jumpForce;
+        player.isJumping = true;
+    }
+    
+    player.velocityY += player.gravity;
+    player.y += player.velocityY;
+
+    if (player.y + player.height >= groundY) {
+        player.y = groundY - player.height;
+        player.velocityY = 0;
+        player.isJumping = false;
+    }
+
+    // Platform Landing System
+    if (gameState !== "interior") {
+        platforms.forEach(plat => {
+            if (player.x + player.width - 20 > plat.x && 
+                player.x + 20 < plat.x + plat.width && 
+                player.y + player.height >= plat.y && 
+                player.y + player.height - player.velocityY <= plat.y + 6) {
+                    player.y = plat.y - player.height;
+                    player.velocityY = 0;
+                    player.isJumping = false;
+            }
+        });
+
+        // TRANSITION: Walk inside when hitting the doorway region of the scaled cottage
+        if (player.x + player.width >= cottage.x + 120 && gameState === "safe") {
+            gameState = "interior";
+            player.x = 100; 
+            player.y = groundY - player.height;
+            currentDialogue = "Wow... it's so cozy in here!";
+            dialogueTimer = 125;
+        }
+    }
+}
+
+function updateStoryAndWitch() {
+    if (gameState === "interior") return;
+
+    if (gameState === "tutorial" && player.x > 250 && player.x < 1500) {
+        currentDialogue = null;
+    }
+
+    if (player.x >= 1500 && player.x < 1900) {
+        currentDialogue = "Look out!! Something is coming!";
+    }
+
+    if (player.x >= 1900 && gameState === "tutorial") {
+        gameState = "chase";
+        witch.x = player.x - 350; 
+        witch.y = player.y; // Match starting height
+        currentDialogue = "RUN!!!";
+        dialogueTimer = 90; 
+    }
+
+    if (gameState === "chase") {
+        witch.x += witch.speed;
+
+        // --- WITCH MIMIC BEHAVIOR ---
+        // If Hiba jumps or is falling/moving vertically, copy her physics values!
+        if (player.isJumping || player.y < groundY - player.height) {
+            witch.y = player.y - 15; // Directly track and match vertical positioning with a small levitation offset
+        } else {
+            // Smoothly return to standard ground tracking height when Hiba lands
+            let targetWitchY = groundY - witch.height;
+            witch.y += (targetWitchY - witch.y) * 0.1;
+        }
+
+        if (player.x - witch.x > 450) {
+            witch.x = player.x - 450;
+        }
+
+        if (witch.x + witch.width - 20 >= player.x + 10) {
+            player.x += 120; 
+            currentDialogue = "Hurry! Keep jumping!";
+            dialogueTimer = 60;
+        }
+
+        if (player.x >= 3800) {
+            isTreeFalling = true;
+        }
+    }
+
+    // Tree falling physics (Flipped to back-drop crush behind her)
+    if (isTreeFalling && treeAngle > -Math.PI / 2) {
+        treeAngle -= 0.07; 
+        if (treeAngle <= -Math.PI / 2) {
+            treeAngle = -Math.PI / 2;
+            isTreeFalling = false;
+            gameState = "safe"; 
+            currentDialogue = "Quick, head inside the cottage!";
+        }
+    }
+
+    if (dialogueTimer > 0) {
+        dialogueTimer--;
+        if (dialogueTimer === 0) currentDialogue = null;
+    }
+}
+
+function updateCamera() {
+    if (gameState === "interior") {
+        cameraX = 0; 
+    } else {
+        cameraX = player.x - canvas.width / 2 + player.width / 2;
+        if (cameraX < 0) cameraX = 0;
+        if (cameraX > worldWidth - canvas.width) cameraX = worldWidth - canvas.width;
+    }
+}
+
+function render() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    if (gameState === "interior") {
+        ctx.drawImage(interiorSprite, 0, 0, canvas.width, canvas.height);
+        drawHiba();
+        drawDialogue();
+        return;
+    }
+
+    ctx.save();
+    ctx.translate(-cameraX, 0); 
+
+    for (let i = 0; i < 6; i++) {
+        ctx.drawImage(background, canvas.width * i, 0, canvas.width, canvas.height);
+    }
+
+    // Draw platforms
+    platforms.forEach(plat => {
+        ctx.fillStyle = "#3e4f3c"; 
+        ctx.fillRect(plat.x, plat.y, plat.width, plat.height);
+        ctx.strokeStyle = "#1d261c";
+        ctx.lineWidth = 2;
+        ctx.strokeRect(plat.x, plat.y, plat.width, plat.height);
+
+        if (plat.text) {
+            ctx.fillStyle = "#ffdd55";
+            ctx.font = "bold 14px monospace";
+            ctx.textAlign = "center";
+            ctx.fillText(plat.text, plat.x + plat.width/2, plat.y - 12);
+        }
+    });
+
+    if (player.x < 400) {
+        ctx.drawImage(butterflySprite, 300, 220, 35, 35);
+    } else if (player.x >= 1500 && player.x < 2000) {
+        ctx.drawImage(butterflySprite, 1750, 200, 35, 35);
+    }
+
+    // Draw larger, grounded Cottage
+    ctx.drawImage(cottageSprite, cottage.x, cottage.y, cottage.width, cottage.height);
+
+    // Draw Witch mimicking position
+    if (gameState === "chase" || (gameState === "safe" && player.x < fallingTreeX)) {
+        ctx.drawImage(witchSprite, witch.x, witch.y, witch.width, witch.height);
+    }
+
+    // Draw falling Tree
+    ctx.save();
+    ctx.translate(fallingTreeX + 40, groundY); 
+    ctx.rotate(treeAngle); 
+    ctx.drawImage(treeSprite, -60, -220, 120, 220); // Scaled up tree trunk size
+    ctx.restore();
+
+    // Draw Hiba
+    drawHiba();
+
+    ctx.restore(); 
+    drawDialogue();
+}
+
+function drawHiba() {
+    ctx.save();
+    if (player.facing === 'forward') {
+        ctx.drawImage(hibaSprite, player.x, player.y, player.width, player.height);
+    } else if (player.facing === 'right') {
+        ctx.drawImage(hibaSprite, player.x + (player.width * 0.15), player.y, player.width * 0.7, player.height);
+    } else if (player.facing === 'left') {
+        ctx.translate(player.x + player.width / 2, player.y + player.height / 2);
+        ctx.scale(-1, 1);
+        ctx.drawImage(hibaSprite, -player.width / 2 + (player.width * 0.15), -player.height / 2, player.width * 0.7, player.height);
+    }
+    ctx.restore();
+}
+
+function drawDialogue() {
+    if (currentDialogue) {
+        ctx.fillStyle = "rgba(0, 0, 0, 0.8)";
+        ctx.strokeStyle = "#7c6a94";
+        ctx.lineWidth = 3;
+        ctx.fillRect(50, 20, canvas.width - 100, 50);
+        ctx.strokeRect(50, 20, canvas.width - 100, 50);
+
+        ctx.fillStyle = "#ffffff";
+        ctx.font = "16px 'Courier New', monospace";
+        ctx.textAlign = "center";
+        ctx.fillText(currentDialogue, canvas.width / 2, 50);
+    }
+}
